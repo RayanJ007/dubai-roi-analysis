@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
+import plotly.io as pio
 import streamlit as st
 
 
@@ -26,14 +27,195 @@ from note import (  # noqa: E402
     prepare_price_features,
 )
 
+
 MONTH_OPTIONS = {calendar.month_name[number]: number for number in range(1, 13)}
+PAGES = [
+    "Home",
+    "Market Overview",
+    "Area Comparison",
+    "Price Prediction",
+    "ROI Calculator",
+    "Investment Opportunities",
+    "Model Performance",
+]
 
 
 st.set_page_config(
     page_title="Dubai Real Estate Dashboard",
-    page_icon="Dubai",
+    page_icon="DXB",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
+
+pio.templates.default = "plotly_dark"
+
+
+def apply_theme() -> None:
+    st.markdown(
+        """
+        <style>
+        :root {
+            --dxb-blue: #48a6ff;
+            --dxb-orange: #ff8a2a;
+            --dxb-ink: #f7fbff;
+            --dxb-muted: #a9b4c5;
+            --dxb-soft: #151a24;
+            --dxb-line: #293244;
+            --dxb-panel: #10151f;
+            --dxb-panel-2: #171d29;
+        }
+
+        .stApp {
+            background:
+                radial-gradient(circle at top left, rgba(72, 166, 255, 0.18), transparent 28rem),
+                radial-gradient(circle at top right, rgba(255, 138, 42, 0.13), transparent 26rem),
+                linear-gradient(180deg, #070a10 0%, #0b1018 54%, #080b11 100%);
+            color: var(--dxb-ink);
+        }
+
+        h1, h2, h3, h4, h5, h6, p, li, label, span {
+            color: inherit;
+        }
+
+        div[data-testid="stSidebar"] {
+            display: none;
+        }
+
+        .block-container {
+            max-width: 1220px;
+            padding-top: 1.2rem;
+            padding-bottom: 3rem;
+        }
+
+        .dxb-shell {
+            border: 1px solid rgba(72, 166, 255, 0.18);
+            border-radius: 22px;
+            background: rgba(16, 21, 31, 0.86);
+            box-shadow: 0 18px 45px rgba(0, 0, 0, 0.24);
+            padding: 1rem 1.2rem;
+            margin-bottom: 1rem;
+        }
+
+        .dxb-hero {
+            border: 1px solid rgba(72, 166, 255, 0.20);
+            border-radius: 28px;
+            padding: 2.2rem;
+            margin: 0.7rem 0 1.2rem;
+            background:
+                linear-gradient(135deg, rgba(72, 166, 255, 0.18), rgba(255, 138, 42, 0.12)),
+                var(--dxb-panel);
+            box-shadow: 0 22px 55px rgba(0, 0, 0, 0.32);
+        }
+
+        .dxb-kicker {
+            color: var(--dxb-blue);
+            font-weight: 800;
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin-bottom: 0.4rem;
+        }
+
+        .dxb-hero h1 {
+            font-size: 3rem;
+            line-height: 1.02;
+            margin: 0 0 0.7rem;
+        }
+
+        .dxb-hero p {
+            max-width: 760px;
+            color: var(--dxb-muted);
+            font-size: 1.05rem;
+            margin-bottom: 0;
+        }
+
+        .dxb-pill-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.55rem;
+            margin-top: 1.2rem;
+        }
+
+        .dxb-pill {
+            border: 1px solid var(--dxb-line);
+            border-radius: 999px;
+            padding: 0.45rem 0.75rem;
+            background: rgba(255, 255, 255, 0.07);
+            font-weight: 650;
+            color: var(--dxb-ink);
+        }
+
+        .dxb-note {
+            border-left: 5px solid var(--dxb-orange);
+            border-radius: 12px;
+            background: rgba(255, 138, 42, 0.13);
+            color: #ffe4cc;
+            padding: 0.9rem 1rem;
+            margin: 1rem 0;
+        }
+
+        .dxb-definition {
+            border: 1px solid rgba(72, 166, 255, 0.22);
+            border-radius: 14px;
+            background: rgba(72, 166, 255, 0.08);
+            padding: 0.85rem 1rem;
+            color: #d9e8ff;
+            margin: 0.8rem 0;
+        }
+
+        div[data-testid="stMetric"] {
+            background: var(--dxb-panel);
+            border: 1px solid var(--dxb-line);
+            border-radius: 18px;
+            padding: 1rem;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.18);
+        }
+
+        div[data-testid="stMetric"] label,
+        div[data-testid="stMetric"] div {
+            color: var(--dxb-ink) !important;
+        }
+
+        .stRadio [role="radiogroup"] {
+            display: flex;
+            gap: 0.35rem;
+            flex-wrap: wrap;
+            border: 1px solid var(--dxb-line);
+            border-radius: 999px;
+            padding: 0.35rem;
+            background: rgba(16, 21, 31, 0.88);
+            box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
+        }
+
+        .stRadio label {
+            border-radius: 999px;
+            padding: 0.35rem 0.65rem;
+        }
+
+        div[data-testid="stExpander"] {
+            border-radius: 16px;
+            border-color: var(--dxb-line);
+            background: var(--dxb-panel);
+        }
+
+        div[data-testid="stDataFrame"],
+        div[data-testid="stPlotlyChart"] {
+            border: 1px solid var(--dxb-line);
+            border-radius: 18px;
+            overflow: hidden;
+            background: var(--dxb-panel);
+        }
+
+        .stSelectbox div,
+        .stMultiSelect div,
+        .stNumberInput div,
+        .stSlider div {
+            color: var(--dxb-ink);
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 @st.cache_data(show_spinner="Loading dashboard data...")
@@ -73,21 +255,6 @@ def prepare_prediction_features(row: pd.DataFrame) -> pd.DataFrame:
     return align_price_categories(prepared, get_saved_price_categories())
 
 
-def option_count(data: pd.DataFrame, column: str) -> int:
-    if column not in data.columns:
-        return 0
-    return data[column].dropna().astype(str).nunique()
-
-
-def restrict_scoped_data(data: pd.DataFrame, column: str, value: str) -> pd.DataFrame:
-    filtered = data[data[column].astype(str).eq(str(value))]
-    return filtered if not filtered.empty else data
-
-
-def select_from_scope(label: str, data: pd.DataFrame, column: str, default: str | None = None) -> str:
-    return safe_selectbox(label, get_options(data, column), default=default)
-
-
 def money(value: float) -> str:
     if pd.isna(value):
         return "N/A"
@@ -113,12 +280,30 @@ def get_options(data: pd.DataFrame, column: str) -> list[str]:
     )
 
 
+def format_title(value: str) -> str:
+    return str(value).replace("_", " ").title()
+
+
 def safe_selectbox(label: str, options: list[str], default: str | None = None) -> str:
     if not options:
         st.warning(f"No available options for {label}.")
         return ""
     index = options.index(default) if default in options else 0
-    return st.selectbox(label, options, index=index)
+    return st.selectbox(
+        label,
+        options,
+        index=index,
+        format_func=format_title,
+    )
+
+
+def restrict_scoped_data(data: pd.DataFrame, column: str, value: str) -> pd.DataFrame:
+    filtered = data[data[column].astype(str).eq(str(value))]
+    return filtered if not filtered.empty else data
+
+
+def select_from_scope(label: str, data: pd.DataFrame, column: str, default: str | None = None) -> str:
+    return safe_selectbox(label, get_options(data, column), default=default)
 
 
 def prediction_domain(data: pd.DataFrame) -> pd.DataFrame:
@@ -152,85 +337,93 @@ def area_summary_with_coordinates(data: pd.DataFrame) -> pd.DataFrame:
     return summary.merge(coordinates, on="area_name_en", how="left")
 
 
-def area_map(summary: pd.DataFrame, title: str, key: str) -> None:
-    mapped = summary.dropna(subset=["latitude", "longitude"]).copy()
-    if mapped.empty:
-        st.info("Map coordinates are not available for the selected areas yet.")
-        return
-
-    mapped["display_area"] = mapped["area_name_en"].astype(str).str.title()
-
-    all_areas_option = "All mapped areas"
-    area_options = [all_areas_option] + mapped["area_name_en"].astype(str).sort_values().tolist()
-    selected_area = st.selectbox(
-        "Search map area",
-        area_options,
-        key=f"{key}_area_search",
-        help="Click and type to search for a Dubai area.",
-        format_func=lambda value: all_areas_option if value == all_areas_option else value.title(),
-    )
-
-    if selected_area == all_areas_option:
-        center = {"lat": 25.12, "lon": 55.25}
-        zoom = 9
+def disclaimer(kind: str = "general") -> None:
+    if kind == "prediction":
+        text = (
+            "Model predictions are estimates from historical transaction patterns. They do not include "
+            "unit condition, floor level, view, exact building quality, negotiation context, financing terms, "
+            "or live market sentiment."
+        )
+    elif kind == "roi":
+        text = (
+            "ROI outputs are scenario calculations, not guaranteed returns. Results depend heavily on rent, "
+            "vacancy, fees, maintenance, closing costs, financing, and resale assumptions."
+        )
     else:
-        selected_row = mapped[mapped["area_name_en"].astype(str).eq(selected_area)].iloc[0]
-        center = {"lat": selected_row["latitude"], "lon": selected_row["longitude"]}
-        zoom = 12
+        text = (
+            "This dashboard is for research and educational analysis only. It is not financial, legal, "
+            "tax, or investment advice."
+        )
 
-    st.plotly_chart(
-        px.scatter_mapbox(
-            mapped,
-            lat="latitude",
-            lon="longitude",
-            size="transactions",
-            color="median_price_per_sqm",
-            hover_name="display_area",
-            hover_data={
-                "area_name_en": False,
-                "display_area": False,
-                "transactions": ":,",
-                "median_price": ":,.0f",
-                "median_price_per_sqm": ":,.0f",
-                "latitude": False,
-                "longitude": False,
-            },
-            color_continuous_scale="Viridis",
-            center=center,
-            zoom=zoom,
-            height=520,
-            title=title,
-        ).update_layout(mapbox_style="carto-positron", margin=dict(l=0, r=0, t=45, b=0)),
-        use_container_width=True,
+    st.markdown(f"<div class='dxb-note'><strong>Disclaimer:</strong> {text}</div>", unsafe_allow_html=True)
+
+
+def definition(title: str, body: str) -> None:
+    st.markdown(
+        f"<div class='dxb-definition'><strong>{title}</strong><br>{body}</div>",
+        unsafe_allow_html=True,
     )
 
 
-def sidebar_filters(data: pd.DataFrame) -> pd.DataFrame:
-    st.sidebar.header("Filters")
-
-    years = sorted(data["year"].dropna().astype(int).unique().tolist())
-    selected_years = st.sidebar.multiselect(
-        "Year",
-        years,
-        default=years[-5:] if len(years) > 5 else years,
+def header() -> str:
+    st.markdown(
+        """
+        <div class="dxb-hero">
+            <div class="dxb-kicker">Dubai transaction intelligence</div>
+            <h1>Dubai Real Estate Dashboard</h1>
+            <p>
+                Explore market activity, compare areas, estimate property value, and test ROI scenarios
+                using cleaned Dubai transaction data and saved machine-learning models.
+            </p>
+            <div class="dxb-pill-row">
+                <span class="dxb-pill">Market analytics</span>
+                <span class="dxb-pill">Area comparison</span>
+                <span class="dxb-pill">Price prediction</span>
+                <span class="dxb-pill">ROI scenarios</span>
+                <span class="dxb-pill">Model evidence</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    property_types = get_options(data, "property_type_en")
-    selected_property_types = st.sidebar.multiselect(
-        "Property type",
-        property_types,
-        default=property_types,
+    return st.radio(
+        "Dashboard section",
+        PAGES,
+        horizontal=True,
+        label_visibility="collapsed",
     )
 
-    areas = get_options(data, "area_name_en")
-    selected_areas = st.sidebar.multiselect(
-        "Area",
-        areas,
-        default=[],
-        help="Leave empty to include all areas.",
-    )
 
-    filtered = data.copy()
+def top_filters(data: pd.DataFrame) -> pd.DataFrame:
+    with st.expander("Market filters", expanded=False):
+        c1, c2, c3 = st.columns([1.1, 1.2, 2])
+
+        years = sorted(data["year"].dropna().astype(int).unique().tolist())
+        selected_years = c1.multiselect(
+            "Years",
+            years,
+            default=years[-5:] if len(years) > 5 else years,
+        )
+
+        property_types = get_options(data, "property_type_en")
+        selected_property_types = c2.multiselect(
+            "Property types",
+            property_types,
+            default=property_types,
+            format_func=format_title,
+        )
+
+        areas = get_options(data, "area_name_en")
+        selected_areas = c3.multiselect(
+            "Areas",
+            areas,
+            default=[],
+            help="Leave empty to include all areas. Click and type to search.",
+            format_func=format_title,
+        )
+
+    filtered = data
     if selected_years:
         filtered = filtered[filtered["year"].isin(selected_years)]
     if selected_property_types:
@@ -241,8 +434,111 @@ def sidebar_filters(data: pd.DataFrame) -> pd.DataFrame:
     return filtered
 
 
+def area_map(summary: pd.DataFrame, title: str, key: str) -> None:
+    mapped = summary.dropna(subset=["latitude", "longitude"]).copy()
+    if mapped.empty:
+        st.info("Map coordinates are not available for the selected areas yet.")
+        return
+
+    mapped["display_area"] = mapped["area_name_en"].astype(str).map(format_title)
+    all_areas_option = "All mapped areas"
+    area_options = [all_areas_option] + mapped["area_name_en"].astype(str).sort_values().tolist()
+    selected_area = st.selectbox(
+        "Search map area",
+        area_options,
+        key=f"{key}_area_search",
+        help="Click and type to search for a Dubai area.",
+        format_func=lambda value: all_areas_option if value == all_areas_option else format_title(value),
+    )
+
+    visible = mapped
+    if selected_area != all_areas_option:
+        selected = mapped[mapped["area_name_en"].astype(str).eq(selected_area)]
+        visible = pd.concat([selected, mapped[~mapped["area_name_en"].astype(str).eq(selected_area)].head(30)])
+
+    fig = px.scatter(
+        visible,
+        x="longitude",
+        y="latitude",
+        size="transactions",
+        color="median_price_per_sqm",
+        hover_name="display_area",
+        hover_data={
+            "transactions": ":,",
+            "median_price": ":,.0f",
+            "median_price_per_sqm": ":,.0f",
+            "latitude": False,
+            "longitude": False,
+            "display_area": False,
+        },
+        text="display_area",
+        color_continuous_scale=["#075be8", "#1fbf75", "#ff7a1a"],
+        template="plotly_dark",
+        height=540,
+        title=title,
+    )
+    fig.update_traces(textposition="top center", marker=dict(line=dict(width=1, color="#ffffff")))
+    fig.update_layout(
+        plot_bgcolor="#0f1520",
+        paper_bgcolor="#10151f",
+        font_color="#eef5ff",
+        xaxis_title="Longitude",
+        yaxis_title="Latitude",
+        margin=dict(l=10, r=10, t=55, b=10),
+    )
+    fig.update_xaxes(showgrid=True, gridcolor="#293244", zeroline=False)
+    fig.update_yaxes(showgrid=True, gridcolor="#293244", zeroline=False, scaleanchor="x", scaleratio=1)
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def home_page(data: pd.DataFrame) -> None:
+    st.header("What This Dashboard Does")
+    disclaimer()
+
+    st.markdown(
+        """
+        This dashboard turns the notebook research into an interactive tool. The data is cleaned,
+        filtered, cached, and connected to saved models so users can explore the Dubai residential
+        sales market without retraining anything.
+
+        The project has two machine-learning layers. First, a CatBoost classifier fills selected
+        missing room categories. Second, an XGBoost model predicts transaction value from property,
+        location, room, area, time, and transaction-context features.
+        """
+    )
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Dashboard Rows", f"{len(data):,}")
+    c2.metric("Areas", f"{data['area_name_en'].astype(str).nunique():,}")
+    c3.metric("Years Covered", f"{int(data['year'].min())} to {int(data['year'].max())}")
+
+    st.subheader("How To Read The App")
+    definition(
+        "Market Overview",
+        "Use this first to understand overall transaction volume, median price, median property size, and time trends.",
+    )
+    definition(
+        "Area Comparison",
+        "Use this to compare Dubai areas by median price, price per square metre, activity level, and typical property size.",
+    )
+    definition(
+        "Price Prediction",
+        "Use this to estimate the transaction value of a property. Inputs are restricted to categories the saved XGBoost model can accept.",
+    )
+    definition(
+        "ROI Calculator",
+        "Use this for scenario analysis after estimating purchase price and rent. It calculates yield and one-year return assumptions.",
+    )
+    definition(
+        "Investment Opportunities",
+        "Use this as a screening view. The value score combines activity and relative price per square metre, but it is not investment advice.",
+    )
+
+
 def market_overview(data: pd.DataFrame) -> None:
     st.header("Market Overview")
+    disclaimer()
 
     total_transactions = len(data)
     median_price = data["actual_worth"].median()
@@ -254,6 +550,11 @@ def market_overview(data: pd.DataFrame) -> None:
     c2.metric("Median Price", money(median_price))
     c3.metric("Median Area", f"{median_area:,.0f} sqm")
     c4.metric("Median Price / sqm", money(median_ppsqm))
+
+    definition(
+        "Median price",
+        "The middle transaction value. It is usually more stable than the average because extreme luxury sales can pull the mean upward.",
+    )
 
     monthly = (
         data
@@ -297,6 +598,12 @@ def market_overview(data: pd.DataFrame) -> None:
 
 def area_comparison(data: pd.DataFrame) -> None:
     st.header("Area Comparison")
+    disclaimer()
+
+    definition(
+        "Price per sqm",
+        "A normalized price measure that helps compare areas even when typical property sizes are different.",
+    )
 
     summary = area_summary(data)
     min_transactions = st.slider("Minimum transactions", 25, 1000, 100, step=25)
@@ -329,7 +636,7 @@ def area_comparison(data: pd.DataFrame) -> None:
 
     area_map(
         summary.head(80).merge(get_area_coordinates(), on="area_name_en", how="left"),
-        "Selected Areas On Map",
+        "Selected Areas On Coordinate Map",
         key="area_comparison_map",
     )
 
@@ -338,6 +645,7 @@ def area_comparison(data: pd.DataFrame) -> None:
 
 def price_prediction(data: pd.DataFrame) -> float | None:
     st.header("Price Prediction")
+    disclaimer("prediction")
 
     try:
         model = get_price_model()
@@ -350,7 +658,10 @@ def price_prediction(data: pd.DataFrame) -> float | None:
         st.error("No residential sales records are available for price prediction.")
         return None
 
-    st.caption("Prediction inputs are limited to residential sales categories stored in the saved model.")
+    definition(
+        "Why the dropdowns are restricted",
+        "XGBoost only accepts categories stored in the trained model. The form therefore shows model-compatible residential sales categories to avoid unsupported input errors.",
+    )
 
     c1, c2, c3 = st.columns(3)
 
@@ -358,12 +669,7 @@ def price_prediction(data: pd.DataFrame) -> float | None:
         area_name = select_from_scope("Area", model_data, "area_name_en")
         scoped = restrict_scoped_data(model_data, "area_name_en", area_name)
 
-        property_sub_type = select_from_scope(
-            "Property subtype",
-            scoped,
-            "property_sub_type_en",
-            default="flat",
-        )
+        property_sub_type = select_from_scope("Property subtype", scoped, "property_sub_type_en", default="flat")
         scoped = restrict_scoped_data(scoped, "property_sub_type_en", property_sub_type)
 
         property_type = select_from_scope("Property type", scoped, "property_type_en")
@@ -391,6 +697,7 @@ def price_prediction(data: pd.DataFrame) -> float | None:
             min_value=1.0,
             value=max(1.0, median_area),
             step=5.0,
+            help="Procedure area is the registered area used in the transaction record.",
         )
         has_parking = st.toggle("Has parking", value=True)
         year = st.number_input("Year", min_value=2000, max_value=2035, value=2026, step=1)
@@ -419,10 +726,7 @@ def price_prediction(data: pd.DataFrame) -> float | None:
         prepared = prepare_prediction_features(row)
         predicted_price = float(predict_prices(model, prepared)[0])
     except Exception as exc:
-        st.error(
-            "This exact input could not be predicted with the saved XGBoost model. "
-            f"Details: {exc}"
-        )
+        st.error(f"This exact input could not be predicted with the saved XGBoost model. Details: {exc}")
         return None
 
     predicted_ppsqm = predicted_price / procedure_area
@@ -450,6 +754,12 @@ def price_prediction(data: pd.DataFrame) -> float | None:
 
 def roi_calculator(default_price: float | None) -> None:
     st.header("ROI Calculator")
+    disclaimer("roi")
+
+    definition(
+        "Gross yield vs net yield",
+        "Gross yield uses rent divided by purchase price. Net yield subtracts estimated costs and includes acquisition cost, so it is usually more realistic.",
+    )
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -489,6 +799,7 @@ def roi_calculator(default_price: float | None) -> None:
 
 def investment_opportunities(data: pd.DataFrame) -> None:
     st.header("Investment Opportunities")
+    disclaimer()
 
     summary = area_summary(data)
     summary = summary[summary["transactions"] >= 100].copy()
@@ -497,7 +808,11 @@ def investment_opportunities(data: pd.DataFrame) -> None:
         + summary["median_price_per_sqm"].rank(pct=True, ascending=False)
     )
 
-    st.caption("Simple opportunity score: high transaction activity plus lower median price per sqm.")
+    definition(
+        "Value score",
+        "A simple screening score. It rewards areas with high transaction activity and lower median price per square metre. It is useful for shortlisting areas, not for making a final investment decision.",
+    )
+
     st.dataframe(
         summary.sort_values("value_score", ascending=False).head(25),
         use_container_width=True,
@@ -517,30 +832,81 @@ def investment_opportunities(data: pd.DataFrame) -> None:
     )
 
 
+def show_image(path: Path, caption: str) -> None:
+    if path.exists():
+        st.image(str(path), caption=caption, use_container_width=True)
+    else:
+        st.warning(f"Missing figure: {path.name}")
+
+
 def model_performance() -> None:
     st.header("Model Performance")
+    disclaimer("prediction")
 
-    figure_path = PROJECT_ROOT / "figures" / "xgboost_training_validation_rmse.png"
-    if figure_path.exists():
-        st.image(str(figure_path), caption="XGBoost training vs validation RMSE")
-    else:
-        st.warning("Training curve image not found.")
-
+    st.subheader("Rooms Model")
     st.markdown(
         """
-        The price model predicts `log_actual_worth` and converts predictions back into AED.
-        MAE and RMSE should be used to understand practical prediction error before using
-        results in ROI decisions.
-
-        The saved model is loaded from `models/xgboost_price_model.json`, so the dashboard
-        can run predictions without retraining.
+        The room model is a CatBoost multiclass classifier. It was trained to infer missing
+        `rooms_en` categories using property type, area, registration type, procedure, parking,
+        procedure area, advertised area, and time features.
         """
+    )
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Rooms Accuracy", "0.9033")
+    c2.metric("Rooms Macro F1", "0.6766")
+    c3.metric("Rooms Weighted F1", "0.9030")
+
+    show_image(
+        PROJECT_ROOT / "figures" / "readme" / "rooms_confusion_matrix.png",
+        "Normalized confusion matrix for the room classification model.",
+    )
+
+    st.subheader("Price Model")
+    st.markdown(
+        """
+        The price model is an XGBoost regressor trained on `log_actual_worth`.
+        Predictions are converted back into AED. The log target makes training more stable
+        because real estate prices are strongly right-skewed.
+        """
+    )
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Final Test MAE", "AED 240,843")
+    c2.metric("Final Test RMSE", "AED 598,297")
+    c3.metric("Final Test R2", "0.8892")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        show_image(
+            PROJECT_ROOT / "figures" / "readme" / "price_actual_vs_predicted.png",
+            "Actual vs predicted transaction values.",
+        )
+    with c2:
+        show_image(
+            PROJECT_ROOT / "figures" / "readme" / "price_error_distribution.png",
+            "Distribution of price prediction errors.",
+        )
+
+    show_image(
+        PROJECT_ROOT / "figures" / "xgboost_training_validation_rmse.png",
+        "Training vs validation RMSE on log price.",
+    )
+
+    show_image(
+        PROJECT_ROOT / "figures" / "readme" / "xgboost_feature_importance.png",
+        "XGBoost feature importance for the price model.",
+    )
+
+    definition(
+        "How to interpret the metrics",
+        "MAE is the average absolute AED error. RMSE penalizes large errors more heavily. R2 shows how much variation in price is explained by the model.",
     )
 
 
 def main() -> None:
-    st.title("Dubai Real Estate Dashboard")
-    st.caption("Market analytics, price prediction, and ROI planning from Dubai transaction data.")
+    apply_theme()
+    page = header()
 
     try:
         data = get_data()
@@ -548,22 +914,12 @@ def main() -> None:
         st.error(f"Could not load dashboard data: {exc}")
         st.stop()
 
-    filtered_data = sidebar_filters(data)
-
-    page = st.sidebar.radio(
-        "Dashboard",
-        [
-            "Market Overview",
-            "Area Comparison",
-            "Price Prediction",
-            "ROI Calculator",
-            "Investment Opportunities",
-            "Model Performance",
-        ],
-    )
+    filtered_data = top_filters(data)
 
     predicted_price = None
-    if page == "Market Overview":
+    if page == "Home":
+        home_page(filtered_data)
+    elif page == "Market Overview":
         market_overview(filtered_data)
     elif page == "Area Comparison":
         area_comparison(filtered_data)
@@ -577,7 +933,7 @@ def main() -> None:
         model_performance()
 
     if predicted_price is not None:
-        with st.expander("Use this prediction in ROI calculator"):
+        with st.expander("Use this prediction in ROI calculator", expanded=True):
             roi_calculator(default_price=predicted_price)
 
 
