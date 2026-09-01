@@ -2,13 +2,17 @@
 
 An end-to-end Dubai real estate analytics project covering data cleaning, exploratory research, machine-learning model development, and an interactive Streamlit dashboard for market analysis, price prediction, and ROI planning.
 
-The full research workflow is documented in `note.ipynb`. The notebook is written as the main analytical record for the project: it explains the dataset, cleaning decisions, feature selection, missing-value strategy, modeling experiments, validation results, and interpretation of the final outputs. The Streamlit app then turns that research into a usable dashboard.
+The complete research process is documented in `note.ipynb`. The notebook is the full analytical record: it walks through the raw data, cleaning decisions, feature engineering, missing-value strategy, model training, validation results, and interpretation. This README summarizes the project at a production level and points to the notebook for the deeper research trail.
 
 ## Project Objective
 
-The goal of this project is to build a practical decision-support tool for Dubai real estate analysis. The project starts from raw transaction data, cleans and standardizes it, models missing room information, predicts property transaction value, and exposes the results through a dashboard that can support future ROI calculations.
+The goal of this project is to turn Dubai real estate transaction data into a practical decision-support tool. The project answers three connected questions:
 
-The dashboard is designed around six views:
+- What does the Dubai residential sales market look like across time, areas, and property types?
+- Can missing room categories be inferred reliably enough to improve the dataset?
+- Can a machine-learning model estimate transaction value well enough to support ROI scenario analysis?
+
+The final Streamlit dashboard exposes the project through six main views:
 
 - Market Overview
 - Area Comparison
@@ -17,55 +21,88 @@ The dashboard is designed around six views:
 - Investment Opportunities
 - Model Performance
 
-## Research Summary
+## Data And Research Workflow
 
-The research process follows a structured data-science workflow.
+The project uses Dubai transaction data with fields such as transaction date, transaction group, procedure name, property type, property subtype, usage, registration type, area, room category, parking availability, procedure area, transaction value, and price per square metre.
 
-First, raw transaction files from Dubai real estate open-data sources are loaded and standardized into a consistent schema. The newer transaction file uses different column names from the older file, so the notebook maps both into shared fields such as `instance_date`, `procedure_name_en`, `property_type_en`, `property_sub_type_en`, `area_name_en`, `rooms_en`, `procedure_area`, `actual_worth`, and `meter_sale_price`.
+The raw data required standardization because newer and older files use different schemas. The notebook aligns these files into one shared structure so that later analysis and modeling can use consistent feature names.
 
-Second, the project performs exploratory data analysis. This includes checking data types, missing values, categorical distributions, numerical distributions, transaction groups, room categories, area names, and price behavior. The analysis shows that the raw dataset contains multiple transaction types that should not be modeled together. Sales, mortgages, gifts, land transactions, and non-residential records behave differently, so the price-modeling dataset is narrowed to residential sales records.
+The research workflow follows this order:
 
-Third, the project handles missing room values. Since `rooms_en` is an important predictor for property value, missing room categories are not ignored blindly. A CatBoost multiclass classifier is trained to infer missing room categories from property and location features. Predictions are accepted only when confidence is high enough, while low-confidence room predictions are left missing and later removed from the price-model dataset. This keeps the model useful without pretending uncertain imputations are ground truth.
+1. Load and standardize raw transaction files.
+2. Normalize categorical text values and convert important fields to efficient dtypes.
+3. Review missing values, duplicate rows, and invalid numeric values.
+4. Explore numerical and categorical distributions.
+5. Filter the raw dataset to residential sales records.
+6. Remove extreme outliers from price, area, and price-per-square-metre fields.
+7. Train a CatBoost model to infer missing `rooms_en` values.
+8. Use accepted room predictions to complete the price-modeling dataset.
+9. Train an XGBoost model to predict property transaction value.
+10. Save reusable model and dashboard artifacts.
+11. Build a Streamlit dashboard around the cleaned data and saved models.
 
-Fourth, an XGBoost price model is trained to predict `actual_worth`, the registered transaction value. The model predicts `log_actual_worth` instead of raw price because real estate prices are strongly right-skewed. Predictions are converted back into AED using `np.expm1`.
+## Exploratory Analysis
 
-Finally, the research outputs are turned into a dashboard. Heavy data cleaning is moved into reusable backend code and cached locally, so the dashboard can load prepared data faster instead of re-processing the full raw CSV every time.
+The raw dataset contains more than one type of real estate event. Sales, mortgages, gifts, land transactions, and development-related procedures can all appear in real estate transaction records, but they do not represent the same economic behavior. The notebook therefore studies the distribution of transaction groups before deciding what should be used for price modeling.
 
-## General Findings
+![Transaction group distribution](figures/readme/transaction_group_distribution.png)
 
-Dubai real estate values are highly segmented by location, property area, property subtype, room category, and registration type. The strongest patterns in the analysis are not driven by one single feature. Instead, price behavior comes from the interaction between where the property is, what type of property it is, how large it is, whether it is off-plan or existing, and what room category it belongs to.
+This distribution matters because a price model should not mix fundamentally different transaction meanings. A mortgage record, a gift, and a normal residential sale do not answer the same business question. The final price model focuses on residential sales because that is the most relevant subset for estimating market value and later ROI.
 
-The dataset also shows why filtering matters. A raw real estate transaction dataset contains many valid records that are not comparable for a residential price model. Land, building, agricultural, gift, mortgage, and unusual procedure records can distort the relationship between property characteristics and sale value. The final model therefore focuses on residential sales records, which makes the results more interpretable for a dashboard user trying to estimate property value and ROI.
+Procedure type is also important. Some procedures represent straightforward resale activity, while others relate to off-plan sales, pre-registration, lease-to-own structures, delayed registration, or development workflows.
 
-Area remains one of the most important business variables. In Dubai, the same room count and property size can imply very different values depending on whether the property is in a prime, waterfront, central, suburban, or developing area. This is why the dashboard includes both market-wide summaries and area-level comparisons.
+![Top procedures](figures/readme/top_procedures.png)
 
-Property size also matters strongly, but not in a perfectly linear way. Larger properties generally sell for higher total values, but price per square metre varies heavily across areas and property types. This is why the model uses total property area while the dashboard also reports price-per-square-metre statistics separately.
+The procedure distribution shows that Dubai real estate data is not just a clean list of ordinary resale transactions. Procedure names carry market context. A property sold through pre-registration or off-plan structures may behave differently from an existing-property resale, so the model keeps procedure and registration fields as predictive features.
 
-## Machine Learning
+Property subtype is another key segmentation variable.
 
-### Room Classification Model
+![Property subtype distribution](figures/readme/property_subtypes.png)
 
-The first model predicts missing `rooms_en` values.
+The project narrows the modeling set to residential-style property subtypes such as flats and villas. This is important because land and building records can have very different pricing logic from individual residential units. Keeping the modeling domain narrower improves interpretability and reduces category errors in the dashboard.
 
-Model type:
+## Market Findings
 
-- CatBoost multiclass classifier
+Dubai real estate prices are highly segmented. The same room category and area size can produce very different transaction values depending on location, registration type, procedure type, and property subtype.
 
-Target:
+Area is one of the strongest business variables in the project. Prime, waterfront, central, suburban, and emerging districts behave differently. The dashboard therefore includes area-level summaries, area comparison charts, and a map view.
 
-- `rooms_en`
+Property size is also important, but total value is not explained by size alone. Larger properties usually have higher total transaction values, but price per square metre varies heavily across locations and property categories.
 
-Main features:
+The correlation review supports this idea: numerical variables alone do not fully explain price.
 
-- Procedure name
-- Property type
-- Property usage
-- Registration type
-- Area
-- Parking availability
-- Property area
-- Advertised area
-- Time features
+![Numeric correlation heatmap](figures/readme/numeric_correlation_heatmap.png)
+
+The relationship between transaction value and area becomes easier to inspect after applying a log transform to price. Real estate prices are strongly right-skewed, meaning a small number of expensive properties stretch the raw distribution upward.
+
+![Procedure area vs log price](figures/readme/area_vs_log_price.png)
+
+The log transformation compresses extreme prices while preserving rank order. This makes both visualization and modeling more stable. The XGBoost model is therefore trained on `log_actual_worth`, then predictions are converted back to AED.
+
+The time-based analysis also shows why year and month are useful features.
+
+![Yearly transaction activity](figures/readme/yearly_transactions.png)
+
+Transaction activity changes over time, so temporal features help the model understand that market behavior is not fixed. The dashboard also uses time fields for filtering and market trend charts.
+
+## Missing Rooms Strategy
+
+The `rooms_en` field is important because room category is closely related to property type, size, buyer expectations, and price. Dropping every row with missing room data would waste useful transaction records, but filling missing values blindly would add noise.
+
+The project uses a CatBoost multiclass classifier to infer missing `rooms_en` values. CatBoost is a strong choice here because it handles categorical features well and can model interactions between area, property type, procedure, usage, parking, and size.
+
+The room model predicts classes such as:
+
+- Studio
+- 1 B/R
+- 2 B/R
+- 3 B/R
+- 4 B/R
+- 5 B/R
+- 6 B/R
+- Penthouse
+- Single room
+- Other
 
 Final holdout performance:
 
@@ -73,11 +110,15 @@ Final holdout performance:
 - Macro F1: `0.6766`
 - Weighted F1: `0.9030`
 
-The room model performs strongly on common classes such as studio, 1 B/R, 2 B/R, and 3 B/R. Smaller rare classes such as penthouse and high bedroom counts are more difficult because they have far less support. This is expected in imbalanced real estate data.
+![Rooms confusion matrix](figures/readme/rooms_confusion_matrix.png)
 
-### Price Prediction Model
+The confusion matrix shows strong performance for common classes such as studio, 1 B/R, 2 B/R, and 3 B/R. These classes have high support, so the model has enough examples to learn stable patterns. Rare classes such as penthouse and high-bedroom categories are harder because there are fewer examples and more overlap with nearby categories.
 
-The second model predicts property transaction value.
+For the price model, room predictions are handled conservatively. Predictions with sufficient confidence are written into `rooms_en`; low-confidence predictions are left missing and removed later. This keeps the price model from learning from the weakest room imputations.
+
+## Price Prediction Model
+
+The second model predicts `actual_worth`, the registered transaction value of a property.
 
 Model type:
 
@@ -87,7 +128,7 @@ Target:
 
 - `log_actual_worth`
 
-Final prediction output:
+Output:
 
 - AED price prediction after inverse log transform
 
@@ -101,10 +142,12 @@ Main features:
 - Area
 - Rooms
 - Parking availability
-- Property area
+- Procedure area
 - Advertised area
 - Year
 - Month
+
+The target is log-transformed because property prices are heavily right-skewed. The model learns patterns on the log scale, then predictions are converted back into AED with `np.expm1`.
 
 Final test performance:
 
@@ -112,81 +155,90 @@ Final test performance:
 - RMSE: `598,296.59 AED`
 - R2: `0.8892`
 
-The validation and final test results are close, which suggests the model generalizes reasonably well instead of simply memorizing the training data. The training curve in `figures/xgboost_training_validation_rmse.png` also shows training and validation RMSE moving closely together across boosting rounds.
+MAE is the most intuitive metric for dashboard users because it represents the average absolute AED error. RMSE is also important because it penalizes larger mistakes more heavily, which matters for investment decisions.
 
-For ROI use, MAE is especially important because it gives a practical average error in AED. RMSE is also important because large price mistakes can materially change an investment decision.
+![Actual vs predicted price](figures/readme/price_actual_vs_predicted.png)
 
-## Dashboard
+The actual-versus-predicted plot gives a visual check of model fit. Points closer to the diagonal indicate stronger predictions. Wider spread is expected at higher prices because expensive properties are more variable and often depend on details not included in the dataset, such as view, building quality, exact unit condition, floor level, or developer reputation.
 
-The Streamlit dashboard uses the cleaned dataset and saved models to provide an interactive interface.
+![Price error distribution](figures/readme/price_error_distribution.png)
 
-### Market Overview
+The error distribution helps show whether the model tends to overpredict or underpredict. A centered distribution around zero is preferred. Large tails are expected in real estate because unusually expensive or unusual properties are harder to model from structured transaction fields alone.
 
-Shows transaction volume, median price, median area, median price per square metre, monthly trends, top areas by activity, and an area map.
+![XGBoost training vs validation RMSE](figures/xgboost_training_validation_rmse.png)
 
-### Area Comparison
+The training curve compares training RMSE and validation RMSE on the log-price scale. Both curves drop quickly early in training, showing that the model learns the strongest relationships quickly. Later rounds improve more slowly. The training and validation curves stay close together, which suggests the model is not heavily overfitting.
 
-Compares Dubai areas by transaction count, median price, median price per square metre, and median property area. This section helps identify how pricing differs across locations.
+![XGBoost feature importance](figures/readme/xgboost_feature_importance.png)
 
-### Price Prediction
+The feature-importance chart shows which variables the XGBoost model relies on most. For this use case, strong importance from area, procedure area, room category, property subtype, and registration context is expected. These are also the variables a real investor would naturally care about when comparing Dubai properties.
 
-Allows users to input property characteristics and receive a predicted transaction price. The app filters prediction inputs to categories stored in the saved XGBoost model, which prevents unsupported category errors during prediction.
+## Dashboard Architecture
 
-### ROI Calculator
+The dashboard is built with Streamlit and uses reusable backend helpers from `note.py`.
 
-Uses purchase price, rent expectations, operating costs, vacancy assumptions, closing costs, and appreciation assumptions to estimate gross yield, net yield, annual net income, and one-year ROI.
+The app does not retrain models. It loads saved model files from `models/`:
 
-### Investment Opportunities
+- `models/rooms_en_production_final_model.cbm`
+- `models/rooms_en_validation_model.cbm`
+- `models/xgboost_price_model.json`
 
-Ranks areas using a simple opportunity score based on market activity and median price per square metre. This is not investment advice, but it provides a starting point for comparing active areas.
+The dashboard includes:
 
-### Model Performance
-
-Displays the saved XGBoost training-versus-validation RMSE curve and summarizes how the model was evaluated.
+- Market-level metrics
+- Monthly transaction charts
+- Area comparison charts
+- Searchable area map
+- XGBoost price prediction form
+- ROI calculator
+- Investment-opportunity ranking
+- Model-performance section
 
 ## Performance Design
 
-The raw dataset is large, so the dashboard avoids rebuilding the full cleaned DataFrame on every launch.
-
-The backend can build local prepared files:
+The raw transaction files are large, so loading and cleaning them every time would make the dashboard slow. The project now builds local prepared files:
 
 - `data/dashboard_cache.parquet`
 - `data/dashboard.sqlite`
 
-These files are generated locally and ignored by Git. The dashboard reads from the prepared cache when available, which makes normal use much faster than repeatedly parsing and cleaning the full raw CSV.
+These files are generated locally and ignored by Git. The dashboard reads the prepared cache when it exists, which is much faster than repeatedly parsing and cleaning the full raw CSV.
 
-The saved ML models are stored in `models/`, so the dashboard can make predictions without retraining.
+The price prediction page also filters dropdown options to categories stored inside the saved XGBoost model. This prevents unsupported-category errors when users choose an area or procedure that exists in the broader dashboard data but was not present during model training.
 
 ## Project Structure
 
 ```text
 ROIProject/
-├── app/
-│   └── streamlit_app.py
-├── data/
-│   ├── dubai_area_alias_mapping.csv
-│   ├── transactions-2026-07-10.csv
-│   ├── Transactions.csv
-│   ├── dashboard_cache.parquet
-│   └── dashboard.sqlite
-├── figures/
-│   └── xgboost_training_validation_rmse.png
-├── models/
-│   ├── rooms_en_production_final_model.cbm
-│   ├── rooms_en_validation_model.cbm
-│   └── xgboost_price_model.json
-├── note.ipynb
-├── note.py
-├── requirements.txt
-└── README.md
+|-- app/
+|   `-- streamlit_app.py
+|-- data/
+|   |-- dubai_area_alias_mapping.csv
+|   |-- transactions-2026-07-10.csv
+|   |-- Transactions.csv
+|   |-- dashboard_cache.parquet
+|   `-- dashboard.sqlite
+|-- figures/
+|   |-- xgboost_training_validation_rmse.png
+|   `-- readme/
+|       |-- transaction_group_distribution.png
+|       |-- top_procedures.png
+|       |-- property_subtypes.png
+|       |-- numeric_correlation_heatmap.png
+|       |-- area_vs_log_price.png
+|       |-- yearly_transactions.png
+|       |-- rooms_confusion_matrix.png
+|       |-- price_actual_vs_predicted.png
+|       |-- price_error_distribution.png
+|       `-- xgboost_feature_importance.png
+|-- models/
+|   |-- rooms_en_production_final_model.cbm
+|   |-- rooms_en_validation_model.cbm
+|   `-- xgboost_price_model.json
+|-- note.ipynb
+|-- note.py
+|-- requirements.txt
+`-- README.md
 ```
-
-Some local files are intentionally ignored because they are large or generated:
-
-- Raw large CSV files
-- Dashboard cache/database files
-- Virtual environments
-- Python cache files
 
 ## Setup
 
@@ -225,7 +277,7 @@ python -c "from note import prepare_dashboard_data; prepare_dashboard_data(force
 
 ## Research Notebook
 
-Use `note.ipynb` to review the complete research process. The notebook contains the detailed explanation for:
+Use `note.ipynb` to review the complete research process. The notebook contains the full explanation for:
 
 - Data loading and schema standardization
 - Data-quality checks
@@ -239,22 +291,24 @@ Use `note.ipynb` to review the complete research process. The notebook contains 
 - Feature importance
 - Dashboard preparation
 
-## Important Limitations
+## Limitations
 
 This project is an analytical and educational tool. It should not be treated as financial advice.
 
-The price model estimates transaction value from historical patterns. It does not know property condition, exact building quality, view, floor level, developer reputation, renovation quality, negotiation context, financing terms, or live market sentiment unless those variables are included in the data.
+The price model estimates transaction value from historical patterns. It does not know property condition, exact building quality, floor level, view, renovation quality, developer reputation, negotiation context, financing terms, or live market sentiment unless those variables are included in the data.
 
-ROI calculations depend heavily on user assumptions for rent, vacancy, annual costs, fees, and appreciation. The dashboard is most useful as a scenario-testing tool, not as a guarantee of returns.
+The ROI calculator depends heavily on user assumptions for rent, vacancy, annual costs, fees, and appreciation. It is best used for scenario testing, not as a guarantee of returns.
+
+The map currently uses approximate built-in coordinates for commonly used areas. A future production version should use a complete geospatial lookup or official area boundary file.
 
 ## Future Improvements
 
 Useful next steps include:
 
-- Add a real geospatial area lookup instead of approximate built-in map coordinates.
-- Move dashboard queries fully into SQL for faster filtered aggregation.
-- Add rental data so ROI can estimate rent automatically rather than requiring manual input.
-- Add confidence intervals or prediction ranges around price estimates.
+- Move filtered dashboard aggregations fully into SQL.
+- Add rental data so ROI can estimate expected rent automatically.
+- Add prediction intervals around the price estimate.
 - Add model drift checks when new transaction data is added.
-- Package the Streamlit app for cloud deployment.
-- Add a clean API layer if the project later moves from Streamlit to React plus FastAPI.
+- Add a full geospatial area lookup with official boundaries.
+- Package the Streamlit app for deployment.
+- Add a FastAPI layer if the project later moves to a React frontend.
