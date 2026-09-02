@@ -205,10 +205,30 @@ These files are generated locally and ignored by Git. The dashboard reads the pr
 
 The price prediction page also filters dropdown options to categories stored inside the saved XGBoost model. This prevents unsupported-category errors when users choose an area or procedure that exists in the broader dashboard data but was not present during model training.
 
+For Streamlit deployment, keep the heavy data files out of GitHub. Host one prepared data artifact externally and add its URL as a Streamlit secret:
+
+- Recommended: `DASHBOARD_CACHE_URL` pointing to `dashboard_cache.parquet`
+- Optional fallback: `DASHBOARD_DB_URL` pointing to `dashboard.sqlite`
+- Optional private access token: `DASHBOARD_DATA_TOKEN`
+
+The app first checks for local prepared files. If they are missing on the deployed server, it downloads the remote cache or database once into the app's temporary filesystem, then loads the dashboard normally.
+
 ## Project Structure
 
 ```text
 ROIProject/
+|-- backend/
+|   `-- app/
+|       |-- main.py
+|       |-- schemas.py
+|       `-- services.py
+|-- frontend/
+|   |-- src/
+|   |   |-- api.js
+|   |   |-- main.jsx
+|   |   `-- styles.css
+|   |-- index.html
+|   `-- package.json
 |-- app/
 |   `-- streamlit_app.py
 |-- data/
@@ -257,6 +277,30 @@ pip install -r requirements.txt
 
 ## Run The Dashboard
 
+The production-style demo uses FastAPI for the backend and React for the frontend.
+
+Start the API:
+
+```powershell
+python -m uvicorn backend.app.main:app --reload --port 8000
+```
+
+In a second terminal, start the React frontend:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Open the local frontend URL shown by Vite, usually:
+
+```text
+http://127.0.0.1:5173
+```
+
+The Streamlit prototype is still available:
+
 ```powershell
 python -m streamlit run app/streamlit_app.py
 ```
@@ -266,6 +310,28 @@ If the default Streamlit port is already being used:
 ```powershell
 python -m streamlit run app/streamlit_app.py --server.port 8503
 ```
+
+## Streamlit Deployment Data
+
+GitHub should not contain the raw `Transactions.csv` file or the generated `dashboard.sqlite` database. The SQLite file is hundreds of MB and the raw CSV is much larger, so pushing them will either fail or make the repo slow.
+
+The easiest free-friendly deployment setup is:
+
+1. Build `data/dashboard_cache.parquet` locally.
+2. Upload that Parquet file to a file host that can provide a direct download URL.
+3. In Streamlit Community Cloud, open the app settings and add:
+
+```toml
+DASHBOARD_CACHE_URL = "https://your-private-or-signed-download-url/dashboard_cache.parquet"
+```
+
+If the host requires a bearer token, also add:
+
+```toml
+DASHBOARD_DATA_TOKEN = "your-token"
+```
+
+There is an example file at `.streamlit/secrets.example.toml`. Do not commit real secrets.
 
 ## Rebuild The Dashboard Cache
 
