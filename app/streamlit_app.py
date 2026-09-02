@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import calendar
+import os
+import shutil
 import sys
+import tempfile
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import pandas as pd
@@ -15,6 +20,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from note import (  # noqa: E402
+    DASHBOARD_CACHE_PATH,
+    DASHBOARD_DB_PATH,
+    DATA_DIR,
     align_price_categories,
     calculate_roi,
     filter_price_model_domain,
@@ -38,6 +46,58 @@ PAGES = [
     "Investment Opportunities",
     "Model Performance",
 ]
+
+
+def get_secret(name: str, default: str | None = None) -> str | None:
+    """Read a deployment setting from Streamlit secrets or environment variables."""
+
+    value = os.getenv(name)
+    if value:
+        return value
+
+    try:
+        value = st.secrets[name]
+    except (KeyError, FileNotFoundError):
+        return default
+
+    return str(value) if value else default
+
+
+def download_file(url: str, destination: Path, token: str | None = None) -> None:
+    """Download a private dashboard artifact into the local deployment filesystem."""
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    request = urllib.request.Request(url)
+
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+
+    with tempfile.NamedTemporaryFile(delete=False, dir=destination.parent) as temp_file:
+        temp_path = Path(temp_file.name)
+        with urllib.request.urlopen(request, timeout=180) as response:
+            shutil.copyfileobj(response, temp_file)
+
+    temp_path.replace(destination)
+
+
+def ensure_remote_dashboard_storage() -> None:
+    """Fetch deploy-only dashboard data when GitHub does not include the heavy files."""
+
+    if DASHBOARD_CACHE_PATH.exists() or DASHBOARD_DB_PATH.exists():
+        return
+
+    token = get_secret("DASHBOARD_DATA_TOKEN")
+    cache_url = get_secret("DASHBOARD_CACHE_URL")
+    db_url = get_secret("DASHBOARD_DB_URL")
+
+    if cache_url:
+        with st.spinner("Downloading prepared dashboard cache..."):
+            download_file(cache_url, DASHBOARD_CACHE_PATH, token=token)
+        return
+
+    if db_url:
+        with st.spinner("Downloading prepared dashboard database..."):
+            download_file(db_url, DASHBOARD_DB_PATH, token=token)
 
 
 st.set_page_config(
@@ -220,6 +280,7 @@ def apply_theme() -> None:
 
 @st.cache_data(show_spinner="Loading dashboard data...")
 def get_data() -> pd.DataFrame:
+    ensure_remote_dashboard_storage()
     return prepare_dashboard_data()
 
 

@@ -29,6 +29,7 @@ ENV/
 # Local environment files
 .env
 .envrc
+.streamlit/secrets.toml
 
 # Generated binary/cache files
 dubai_charts.cpython-313.pyc
