@@ -5,6 +5,5 @@ seaborn==0.13.2
 scikit-learn==1.7.2
 catboost==1.2.10
 xgboost==3.3.0
-pyarrow==21.0.0
 streamlit==1.52.1
 plotly==6.5.0

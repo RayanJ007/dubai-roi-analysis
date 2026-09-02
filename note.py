@@ -334,7 +334,11 @@ def prepare_dashboard_data(data_dir: Path = DATA_DIR, force_rebuild: bool = Fals
     """Load cleaned dashboard data from cache, building it once if needed."""
 
     if not force_rebuild and DASHBOARD_CACHE_PATH.exists():
-        return pd.read_parquet(DASHBOARD_CACHE_PATH)
+        try:
+            return pd.read_parquet(DASHBOARD_CACHE_PATH)
+        except ImportError:
+            if not DASHBOARD_DB_PATH.exists():
+                raise
 
     if not force_rebuild and DASHBOARD_DB_PATH.exists():
         with sqlite3.connect(DASHBOARD_DB_PATH) as connection:

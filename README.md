@@ -205,13 +205,13 @@ These files are generated locally and ignored by Git. The dashboard reads the pr
 
 The price prediction page also filters dropdown options to categories stored inside the saved XGBoost model. This prevents unsupported-category errors when users choose an area or procedure that exists in the broader dashboard data but was not present during model training.
 
-For Streamlit deployment, keep the heavy data files out of GitHub. Host one prepared data artifact externally and add its URL as a Streamlit secret:
+For Streamlit deployment, keep the heavy data files out of GitHub. Host the prepared SQLite database externally and add its URL as a Streamlit secret:
 
-- Recommended: `DASHBOARD_CACHE_URL` pointing to `dashboard_cache.parquet`
-- Optional fallback: `DASHBOARD_DB_URL` pointing to `dashboard.sqlite`
+- Recommended: `DASHBOARD_DB_URL` pointing to `dashboard.sqlite`
+- Optional local/dev fallback: `DASHBOARD_CACHE_URL` pointing to `dashboard_cache.parquet`
 - Optional private access token: `DASHBOARD_DATA_TOKEN`
 
-The app first checks for local prepared files. If they are missing on the deployed server, it downloads the remote cache or database once into the app's temporary filesystem, then loads the dashboard normally.
+The app first checks for local prepared files. If they are missing on the deployed server, it downloads the remote database once into the app's temporary filesystem, then loads the dashboard normally.
 
 ## Project Structure
 
@@ -317,12 +317,12 @@ GitHub should not contain the raw `Transactions.csv` file or the generated `dash
 
 The easiest free-friendly deployment setup is:
 
-1. Build `data/dashboard_cache.parquet` locally.
-2. Upload that Parquet file to a file host that can provide a direct download URL.
+1. Build `data/dashboard.sqlite` locally.
+2. Upload that SQLite file to a file host that can provide a direct download URL.
 3. In Streamlit Community Cloud, open the app settings and add:
 
 ```toml
-DASHBOARD_CACHE_URL = "https://your-private-or-signed-download-url/dashboard_cache.parquet"
+DASHBOARD_DB_URL = "https://your-private-or-signed-download-url/dashboard.sqlite"
 ```
 
 If the host requires a bearer token, also add:

@@ -87,17 +87,17 @@ def ensure_remote_dashboard_storage() -> None:
         return
 
     token = get_secret("DASHBOARD_DATA_TOKEN")
-    cache_url = get_secret("DASHBOARD_CACHE_URL")
     db_url = get_secret("DASHBOARD_DB_URL")
-
-    if cache_url:
-        with st.spinner("Downloading prepared dashboard cache..."):
-            download_file(cache_url, DASHBOARD_CACHE_PATH, token=token)
-        return
+    cache_url = get_secret("DASHBOARD_CACHE_URL")
 
     if db_url:
         with st.spinner("Downloading prepared dashboard database..."):
             download_file(db_url, DASHBOARD_DB_PATH, token=token)
+        return
+
+    if cache_url:
+        with st.spinner("Downloading prepared dashboard cache..."):
+            download_file(cache_url, DASHBOARD_CACHE_PATH, token=token)
 
 
 st.set_page_config(
