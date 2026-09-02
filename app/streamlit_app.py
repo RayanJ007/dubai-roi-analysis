@@ -458,17 +458,32 @@ def header() -> str:
 
 def top_filters(data: pd.DataFrame) -> pd.DataFrame:
     with st.expander("Market filters", expanded=False):
-        c1, c2, c3 = st.columns([1.1, 1.2, 2])
+        c1, c2, c3, c4 = st.columns([1.4, 1.5, 1.7, 2.4])
 
         years = sorted(data["year"].dropna().astype(int).unique().tolist())
-        selected_years = c1.multiselect(
-            "Years",
-            years,
-            default=years[-5:] if len(years) > 5 else years,
+        if len(years) > 1:
+            selected_year_range = c1.slider(
+                "Year range",
+                min_value=min(years),
+                max_value=max(years),
+                value=(min(years), max(years)),
+                step=1,
+                help="Drag either end to compare a custom period.",
+            )
+        else:
+            selected_year_range = (years[0], years[0])
+            c1.info(f"Year: {years[0]}")
+
+        month_labels = list(MONTH_OPTIONS)
+        selected_month_range = c2.select_slider(
+            "Month range",
+            options=month_labels,
+            value=(month_labels[0], month_labels[-1]),
+            help="This filters the selected months across the chosen year range.",
         )
 
         property_types = get_options(data, "property_type_en")
-        selected_property_types = c2.multiselect(
+        selected_property_types = c3.multiselect(
             "Property types",
             property_types,
             default=property_types,
@@ -476,7 +491,7 @@ def top_filters(data: pd.DataFrame) -> pd.DataFrame:
         )
 
         areas = get_options(data, "area_name_en")
-        selected_areas = c3.multiselect(
+        selected_areas = c4.multiselect(
             "Areas",
             areas,
             default=[],
@@ -485,8 +500,13 @@ def top_filters(data: pd.DataFrame) -> pd.DataFrame:
         )
 
     filtered = data
-    if selected_years:
-        filtered = filtered[filtered["year"].isin(selected_years)]
+    start_year, end_year = selected_year_range
+    filtered = filtered[filtered["year"].between(start_year, end_year)]
+
+    start_month = MONTH_OPTIONS[selected_month_range[0]]
+    end_month = MONTH_OPTIONS[selected_month_range[1]]
+    filtered = filtered[filtered["month"].between(start_month, end_month)]
+
     if selected_property_types:
         filtered = filtered[filtered["property_type_en"].astype(str).isin(selected_property_types)]
     if selected_areas:
