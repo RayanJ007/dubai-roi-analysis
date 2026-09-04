@@ -6,8 +6,6 @@ from typing import Iterable
 
 import numpy as np
 import pandas as pd
-from catboost import CatBoostClassifier
-from xgboost import XGBRegressor
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -397,13 +395,15 @@ def prepare_price_features(df: pd.DataFrame) -> pd.DataFrame:
     return features
 
 
-def load_price_model(path: Path = PRICE_MODEL_PATH) -> XGBRegressor:
+def load_price_model(path: Path = PRICE_MODEL_PATH):
+    from xgboost import XGBRegressor
+
     model = XGBRegressor()
     model.load_model(path)
     return model
 
 
-def get_price_model_categories(model: XGBRegressor) -> dict[str, list[str]]:
+def get_price_model_categories(model) -> dict[str, list[str]]:
     """Return categorical values stored inside a fitted XGBoost model."""
 
     booster = model.get_booster()
@@ -417,7 +417,9 @@ def get_price_model_categories(model: XGBRegressor) -> dict[str, list[str]]:
     return category_values
 
 
-def load_rooms_model(path: Path = ROOMS_MODEL_PATH) -> CatBoostClassifier:
+def load_rooms_model(path: Path = ROOMS_MODEL_PATH):
+    from catboost import CatBoostClassifier
+
     model = CatBoostClassifier()
     model.load_model(path)
     return model
@@ -448,7 +450,7 @@ def align_price_categories(
     return aligned
 
 
-def predict_prices(model: XGBRegressor, features: pd.DataFrame) -> np.ndarray:
+def predict_prices(model, features: pd.DataFrame) -> np.ndarray:
     """Predict AED prices from prepared XGBoost features."""
 
     predicted_log_price = model.predict(features)
