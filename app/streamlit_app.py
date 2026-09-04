@@ -311,7 +311,30 @@ def apply_theme() -> None:
 @st.cache_data(show_spinner="Loading dashboard data...")
 def get_data() -> pd.DataFrame:
     ensure_remote_dashboard_storage()
-    loaded = prepare_dashboard_data()
+
+    if DASHBOARD_DB_PATH.exists():
+        with sqlite3.connect(DASHBOARD_DB_PATH) as connection:
+            loaded = pd.read_sql_query(
+                """
+                SELECT
+                    instance_date,
+                    property_type_en,
+                    area_name_en,
+                    procedure_area,
+                    actual_worth,
+                    year,
+                    month
+                FROM transactions
+                WHERE actual_worth IS NOT NULL
+                  AND actual_worth > 0
+                  AND procedure_area IS NOT NULL
+                  AND procedure_area > 0
+                """,
+                connection,
+                parse_dates=["instance_date"],
+            )
+    else:
+        loaded = prepare_dashboard_data()
 
     years = sorted(loaded["year"].dropna().astype(int).unique().tolist())
     historical_csv_missing = not (DATA_DIR / "Transactions.csv").exists()
@@ -345,7 +368,41 @@ def get_saved_price_categories() -> dict[str, list[str]]:
 
 @st.cache_data(show_spinner="Preparing prediction options...")
 def get_prediction_data() -> pd.DataFrame:
-    data = prediction_domain(get_data())
+    ensure_remote_dashboard_storage()
+
+    if DASHBOARD_DB_PATH.exists():
+        with sqlite3.connect(DASHBOARD_DB_PATH) as connection:
+            data = pd.read_sql_query(
+                """
+                SELECT
+                    trans_group_en,
+                    procedure_name_en,
+                    property_type_en,
+                    property_sub_type_en,
+                    property_usage_en,
+                    reg_type_en,
+                    area_name_en,
+                    rooms_en,
+                    has_parking,
+                    procedure_area,
+                    actual_worth,
+                    advertised_area,
+                    year,
+                    month
+                FROM transactions
+                WHERE trans_group_en = 'sales'
+                  AND rooms_en IS NOT NULL
+                  AND actual_worth IS NOT NULL
+                  AND actual_worth > 0
+                  AND procedure_area IS NOT NULL
+                  AND procedure_area > 0
+                """,
+                connection,
+            )
+    else:
+        data = get_data()
+
+    data = prediction_domain(data)
     category_values = get_saved_price_categories()
 
     for column, values in category_values.items():
