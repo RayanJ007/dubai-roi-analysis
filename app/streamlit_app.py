@@ -24,6 +24,8 @@ from note import (  # noqa: E402
     DASHBOARD_CACHE_PATH,
     DASHBOARD_DB_PATH,
     DATA_DIR,
+    PRICE_MODEL_EXCLUDED_ROOMS,
+    PRICE_MODEL_PROPERTY_SUBTYPES,
     align_price_categories,
     calculate_roi,
     filter_price_model_domain,
@@ -468,6 +470,146 @@ def select_from_scope(label: str, data: pd.DataFrame, column: str, default: str 
     return safe_selectbox(label, get_options(data, column), default=default)
 
 
+PREDICTION_OPTION_COLUMNS = {
+    "procedure_name_en",
+    "property_type_en",
+    "property_sub_type_en",
+    "property_usage_en",
+    "reg_type_en",
+    "area_name_en",
+    "rooms_en",
+    "advertised_area",
+}
+
+
+def prediction_where_clause(scopes: dict[str, str] | None = None) -> tuple[str, list[object]]:
+    clauses = [
+        "trans_group_en = 'sales'",
+        "rooms_en IS NOT NULL",
+        "actual_worth IS NOT NULL",
+        "actual_worth > 0",
+        "procedure_area IS NOT NULL",
+        "procedure_area > 0",
+        f"property_sub_type_en IN ({','.join(['?'] * len(PRICE_MODEL_PROPERTY_SUBTYPES))})",
+        f"rooms_en NOT IN ({','.join(['?'] * len(PRICE_MODEL_EXCLUDED_ROOMS))})",
+    ]
+    params: list[object] = list(PRICE_MODEL_PROPERTY_SUBTYPES) + list(PRICE_MODEL_EXCLUDED_ROOMS)
+
+    for column, value in (scopes or {}).items():
+        if value and column in PREDICTION_OPTION_COLUMNS:
+            clauses.append(f"{column} = ?")
+            params.append(value)
+
+    return " AND ".join(clauses), params
+
+
+@st.cache_data(show_spinner=False)
+def get_prediction_options(scopes: dict[str, str] | None = None) -> dict[str, list[str]]:
+    ensure_remote_dashboard_storage()
+
+    if not DASHBOARD_DB_PATH.exists():
+        data = get_prediction_data()
+        for column, value in (scopes or {}).items():
+            if value and column in data.columns:
+                narrowed = data[data[column].astype(str).eq(str(value))]
+                if not narrowed.empty:
+                    data = narrowed
+        return {
+            column: get_options(data, column)
+            for column in PREDICTION_OPTION_COLUMNS
+            if column in data.columns
+        }
+
+    where_sql, params = prediction_where_clause(scopes)
+    options: dict[str, list[str]] = {}
+
+    with sqlite3.connect(DASHBOARD_DB_PATH) as connection:
+        for column in PREDICTION_OPTION_COLUMNS:
+            rows = pd.read_sql_query(
+                f"""
+                SELECT DISTINCT {column} AS value
+                FROM transactions
+                WHERE {where_sql}
+                  AND {column} IS NOT NULL
+                ORDER BY value
+                """,
+                connection,
+                params=params,
+            )
+            options[column] = rows["value"].dropna().astype(str).tolist()
+
+    return options
+
+
+@st.cache_data(show_spinner=False)
+def get_prediction_median_area(scopes: dict[str, str] | None = None) -> float:
+    ensure_remote_dashboard_storage()
+
+    if not DASHBOARD_DB_PATH.exists():
+        data = get_prediction_data()
+        for column, value in (scopes or {}).items():
+            if value and column in data.columns:
+                narrowed = data[data[column].astype(str).eq(str(value))]
+                if not narrowed.empty:
+                    data = narrowed
+        return float(data["procedure_area"].median()) if not data.empty else 100.0
+
+    where_sql, params = prediction_where_clause(scopes)
+    with sqlite3.connect(DASHBOARD_DB_PATH) as connection:
+        result = pd.read_sql_query(
+            f"SELECT AVG(procedure_area) AS median_area FROM transactions WHERE {where_sql}",
+            connection,
+            params=params,
+        )
+
+    value = result.loc[0, "median_area"]
+    return 100.0 if pd.isna(value) else float(value)
+
+
+def select_prediction_option(label: str, column: str, scopes: dict[str, str], default: str | None = None) -> str:
+    options = get_prediction_options(scopes).get(column, [])
+    return safe_selectbox(label, options, default=default)
+
+
+@st.cache_data(show_spinner=False)
+def get_similar_property_stats(area_name: str, property_type: str, rooms: str) -> dict[str, float | int | None]:
+    ensure_remote_dashboard_storage()
+
+    if not DASHBOARD_DB_PATH.exists():
+        data = get_prediction_data()
+        similar = data[
+            data["area_name_en"].astype(str).eq(str(area_name))
+            & data["property_type_en"].astype(str).eq(str(property_type))
+            & data["rooms_en"].astype(str).eq(str(rooms))
+        ]
+        return {
+            "count": int(len(similar)),
+            "median_price": None if len(similar) < 10 else float(similar["actual_worth"].median()),
+        }
+
+    with sqlite3.connect(DASHBOARD_DB_PATH) as connection:
+        result = pd.read_sql_query(
+            """
+            SELECT actual_worth
+            FROM transactions
+            WHERE trans_group_en = 'sales'
+              AND area_name_en = ?
+              AND property_type_en = ?
+              AND rooms_en = ?
+              AND actual_worth IS NOT NULL
+              AND actual_worth > 0
+            """,
+            connection,
+            params=[area_name, property_type, rooms],
+        )
+
+    count = int(len(result))
+    return {
+        "count": count,
+        "median_price": None if count < 10 else float(result["actual_worth"].median()),
+    }
+
+
 def prediction_domain(data: pd.DataFrame) -> pd.DataFrame:
     domain = filter_price_model_domain(data)
     domain = domain.dropna(subset=["rooms_en", "actual_worth", "procedure_area"]).copy()
@@ -829,14 +971,8 @@ def price_prediction(data: pd.DataFrame) -> float | None:
     st.header("Price Prediction")
     disclaimer("prediction")
 
-    try:
-        model = get_price_model()
-    except Exception as exc:
-        st.error(f"Could not load the price model: {exc}")
-        return None
-
-    model_data = get_prediction_data()
-    if model_data.empty:
+    base_options = get_prediction_options({})
+    if not any(base_options.values()):
         st.error("No residential sales records are available for price prediction.")
         return None
 
@@ -846,34 +982,41 @@ def price_prediction(data: pd.DataFrame) -> float | None:
     )
 
     c1, c2, c3 = st.columns(3)
+    scopes: dict[str, str] = {}
 
     with c1:
-        area_name = select_from_scope("Area", model_data, "area_name_en")
-        scoped = restrict_scoped_data(model_data, "area_name_en", area_name)
+        area_name = select_prediction_option("Area", "area_name_en", scopes)
+        scopes["area_name_en"] = area_name
 
-        property_sub_type = select_from_scope("Property subtype", scoped, "property_sub_type_en", default="flat")
-        scoped = restrict_scoped_data(scoped, "property_sub_type_en", property_sub_type)
+        property_sub_type = select_prediction_option(
+            "Property subtype",
+            "property_sub_type_en",
+            scopes,
+            default="flat",
+        )
+        scopes["property_sub_type_en"] = property_sub_type
 
-        property_type = select_from_scope("Property type", scoped, "property_type_en")
-        scoped = restrict_scoped_data(scoped, "property_type_en", property_type)
+        property_type = select_prediction_option("Property type", "property_type_en", scopes)
+        scopes["property_type_en"] = property_type
 
-        property_usage = select_from_scope("Property usage", scoped, "property_usage_en")
-        scoped = restrict_scoped_data(scoped, "property_usage_en", property_usage)
+        property_usage = select_prediction_option("Property usage", "property_usage_en", scopes)
+        scopes["property_usage_en"] = property_usage
 
     with c2:
-        rooms = select_from_scope("Rooms", scoped, "rooms_en")
-        scoped = restrict_scoped_data(scoped, "rooms_en", rooms)
+        rooms = select_prediction_option("Rooms", "rooms_en", scopes)
+        scopes["rooms_en"] = rooms
 
-        reg_type = select_from_scope("Registration type", scoped, "reg_type_en")
-        scoped = restrict_scoped_data(scoped, "reg_type_en", reg_type)
+        reg_type = select_prediction_option("Registration type", "reg_type_en", scopes)
+        scopes["reg_type_en"] = reg_type
 
-        procedure_name = select_from_scope("Procedure", scoped, "procedure_name_en")
-        scoped = restrict_scoped_data(scoped, "procedure_name_en", procedure_name)
+        procedure_name = select_prediction_option("Procedure", "procedure_name_en", scopes)
+        scopes["procedure_name_en"] = procedure_name
 
-        advertised_area = select_from_scope("Advertised area", scoped, "advertised_area")
+        advertised_area = select_prediction_option("Advertised area", "advertised_area", scopes)
+        scopes["advertised_area"] = advertised_area
 
     with c3:
-        median_area = float(scoped["procedure_area"].median()) if not scoped.empty else 100.0
+        median_area = get_prediction_median_area(scopes)
         procedure_area = st.number_input(
             "Property area (sqm)",
             min_value=1.0,
@@ -887,6 +1030,12 @@ def price_prediction(data: pd.DataFrame) -> float | None:
         month = MONTH_OPTIONS[month_name]
 
     if not st.button("Predict price", type="primary"):
+        return None
+
+    try:
+        model = get_price_model()
+    except Exception as exc:
+        st.error(f"Could not load the price model: {exc}")
         return None
 
     row = make_prediction_row(
@@ -917,17 +1066,13 @@ def price_prediction(data: pd.DataFrame) -> float | None:
     c1.metric("Predicted Price", money(predicted_price))
     c2.metric("Predicted Price / sqm", money(predicted_ppsqm))
 
-    similar = model_data[
-        model_data["area_name_en"].astype(str).eq(str(area_name))
-        & model_data["property_type_en"].astype(str).eq(str(property_type))
-        & model_data["rooms_en"].astype(str).eq(str(rooms))
-    ]
-
-    if len(similar) >= 10:
-        median_similar = similar["actual_worth"].median()
+    similar = get_similar_property_stats(area_name, property_type, rooms)
+    if similar["median_price"] is not None:
+        median_similar = similar["median_price"]
         difference = predicted_price - median_similar
         st.info(
-            f"Similar-property median: {money(median_similar)}. "
+            f"Similar-property typical price: {money(median_similar)} "
+            f"from {similar['count']:,} matching records. "
             f"Prediction difference: {money(difference)}."
         )
 
