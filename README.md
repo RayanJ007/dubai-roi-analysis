@@ -275,42 +275,6 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-## Run The Dashboard
-
-The production-style demo uses FastAPI for the backend and React for the frontend.
-
-Start the API:
-
-```powershell
-python -m uvicorn backend.app.main:app --reload --port 8000
-```
-
-In a second terminal, start the React frontend:
-
-```powershell
-cd frontend
-npm install
-npm run dev
-```
-
-Open the local frontend URL shown by Vite, usually:
-
-```text
-http://127.0.0.1:5173
-```
-
-The Streamlit prototype is still available:
-
-```powershell
-python -m streamlit run app/streamlit_app.py
-```
-
-If the default Streamlit port is already being used:
-
-```powershell
-python -m streamlit run app/streamlit_app.py --server.port 8503
-```
-
 ## Streamlit Deployment Data
 
 GitHub should not contain the raw `Transactions.csv` file or the generated `dashboard.sqlite` database. The SQLite file is hundreds of MB and the raw CSV is much larger, so pushing them will either fail or make the repo slow.
