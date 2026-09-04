@@ -3,6 +3,7 @@ from __future__ import annotations
 import calendar
 import os
 import shutil
+import sqlite3
 import sys
 import tempfile
 import urllib.error
@@ -80,19 +81,48 @@ def download_file(url: str, destination: Path, token: str | None = None) -> None
     temp_path.replace(destination)
 
 
+def sqlite_years(path: Path) -> list[int]:
+    """Read available transaction years from a dashboard SQLite file."""
+
+    if not path.exists():
+        return []
+
+    try:
+        with sqlite3.connect(path) as connection:
+            rows = pd.read_sql_query(
+                "SELECT DISTINCT year FROM transactions WHERE year IS NOT NULL ORDER BY year",
+                connection,
+            )
+    except sqlite3.Error:
+        return []
+
+    return rows["year"].dropna().astype(int).tolist()
+
+
+def has_historical_sqlite(path: Path) -> bool:
+    """Return True when the SQLite data contains more than the 2026 update file."""
+
+    years = sqlite_years(path)
+    return len(years) > 1 or any(year < 2026 for year in years)
+
+
 def ensure_remote_dashboard_storage() -> None:
     """Fetch deploy-only dashboard data when GitHub does not include the heavy files."""
-
-    if DASHBOARD_CACHE_PATH.exists() or DASHBOARD_DB_PATH.exists():
-        return
 
     token = get_secret("DASHBOARD_DATA_TOKEN")
     db_url = get_secret("DASHBOARD_DB_URL")
     cache_url = get_secret("DASHBOARD_CACHE_URL")
 
     if db_url:
-        with st.spinner("Downloading prepared dashboard database..."):
-            download_file(db_url, DASHBOARD_DB_PATH, token=token)
+        if not has_historical_sqlite(DASHBOARD_DB_PATH):
+            with st.spinner("Downloading prepared dashboard database..."):
+                download_file(db_url, DASHBOARD_DB_PATH, token=token)
+
+        if DASHBOARD_CACHE_PATH.exists():
+            DASHBOARD_CACHE_PATH.unlink()
+        return
+
+    if DASHBOARD_CACHE_PATH.exists() or DASHBOARD_DB_PATH.exists():
         return
 
     if cache_url:
@@ -281,7 +311,21 @@ def apply_theme() -> None:
 @st.cache_data(show_spinner="Loading dashboard data...")
 def get_data() -> pd.DataFrame:
     ensure_remote_dashboard_storage()
-    return prepare_dashboard_data()
+    loaded = prepare_dashboard_data()
+
+    years = sorted(loaded["year"].dropna().astype(int).unique().tolist())
+    historical_csv_missing = not (DATA_DIR / "Transactions.csv").exists()
+    remote_db_missing = not get_secret("DASHBOARD_DB_URL")
+
+    if years == [2026] and historical_csv_missing and remote_db_missing:
+        st.error(
+            "Only the 2026 update file is available on this deployment. "
+            "Add DASHBOARD_DB_URL in Streamlit secrets so the app can download "
+            "the full historical dashboard.sqlite database."
+        )
+        st.stop()
+
+    return loaded
 
 
 @st.cache_data

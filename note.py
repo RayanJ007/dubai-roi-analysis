@@ -348,7 +348,10 @@ def prepare_dashboard_data(data_dir: Path = DATA_DIR, force_rebuild: bool = Fals
                 parse_dates=["instance_date"],
             )
         if not DASHBOARD_CACHE_PATH.exists():
-            data.to_parquet(DASHBOARD_CACHE_PATH, index=False)
+            try:
+                data.to_parquet(DASHBOARD_CACHE_PATH, index=False)
+            except ImportError:
+                pass
         return data
 
     return build_dashboard_database(data_dir=data_dir)
