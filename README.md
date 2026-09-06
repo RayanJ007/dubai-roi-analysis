@@ -1,5 +1,7 @@
 # Dubai Real Estate ROI Analysis
 
+The React / FastAPI interface now includes multi-select market filters, an interactive street map, model valuations with comparable sales, and connected ROI / future-value scenarios. See [DEVELOPMENT.md](DEVELOPMENT.md) for setup, analytical definitions and validation commands. The research and legacy Streamlit documentation follows below.
+
 An end-to-end Dubai real estate analytics project covering data cleaning, exploratory research, machine-learning model development, and an interactive Streamlit dashboard for market analysis, price prediction, and ROI planning.
 
 The complete research process is documented in `note.ipynb`. The notebook is the full analytical record: it walks through the raw data, cleaning decisions, feature engineering, missing-value strategy, model training, validation results, and interpretation. This README summarizes the project at a production level and points to the notebook for the deeper research trail.

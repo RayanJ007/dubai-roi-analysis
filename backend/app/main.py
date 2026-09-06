@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -62,8 +62,10 @@ def get_market_overview(
     property_types: Annotated[list[str] | None, Query()] = None,
     areas: Annotated[list[str] | None, Query()] = None,
     min_transactions: int | None = None,
+    min_price: float = Query(default=0, ge=0),
+    max_price: float | None = Query(default=None, gt=0),
 ):
-    return services.overview(years, parse_csv(property_types), parse_csv(areas))
+    return services.overview(years, parse_csv(property_types), parse_csv(areas), min_price, max_price)
 
 
 @app.get("/market/areas")
@@ -71,9 +73,11 @@ def get_area_summary(
     years: Annotated[list[int] | None, Query()] = None,
     property_types: Annotated[list[str] | None, Query()] = None,
     areas: Annotated[list[str] | None, Query()] = None,
-    min_transactions: int = 25,
+    min_transactions: int = Query(default=25, ge=1),
+    min_price: float = Query(default=0, ge=0),
+    max_price: float | None = Query(default=None, gt=0),
 ):
-    return services.area_summary(years, parse_csv(property_types), parse_csv(areas), min_transactions)
+    return services.area_summary(years, parse_csv(property_types), parse_csv(areas), min_transactions, min_price, max_price)
 
 
 @app.get("/prediction/options")
@@ -102,7 +106,10 @@ def get_prediction_options(
 
 @app.post("/predict/price")
 def predict_price(payload: PricePredictionRequest):
-    return services.predict_price(payload.model_dump())
+    try:
+        return services.predict_price(payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.post("/roi/calculate")
@@ -115,8 +122,11 @@ def get_opportunities(
     years: Annotated[list[int] | None, Query()] = None,
     property_types: Annotated[list[str] | None, Query()] = None,
     areas: Annotated[list[str] | None, Query()] = None,
+    min_transactions: int = Query(default=100, ge=1),
+    min_price: float = Query(default=0, ge=0),
+    max_price: float | None = Query(default=None, gt=0),
 ):
-    return services.opportunities(years, parse_csv(property_types), parse_csv(areas))
+    return services.opportunities(years, parse_csv(property_types), parse_csv(areas), min_transactions, min_price, max_price)
 
 
 @app.get("/model/performance")

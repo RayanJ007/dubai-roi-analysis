@@ -13,9 +13,23 @@ function query(params = {}) {
   return text ? `?${text}` : "";
 }
 
-async function request(path, options = {}) {
+const pendingReads = new Map();
+function request(path, options = {}) {
+  if (options.method && options.method !== "GET")
+    return fetchJson(path, options);
+  if (pendingReads.has(path)) return pendingReads.get(path);
+  const promise = fetchJson(path, options).finally(() =>
+    pendingReads.delete(path),
+  );
+  pendingReads.set(path, promise);
+  return promise;
+}
+
+async function fetchJson(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    ...(options.body
+      ? { headers: { "Content-Type": "application/json" } }
+      : {}),
     ...options,
   });
 
@@ -24,7 +38,11 @@ async function request(path, options = {}) {
     let message = detail || `Request failed: ${response.status}`;
     try {
       const parsed = JSON.parse(detail);
-      message = parsed.detail || message;
+      message = Array.isArray(parsed.detail)
+        ? parsed.detail
+            .map((item) => `${item.loc?.at(-1) ?? "Input"}: ${item.msg}`)
+            .join("; ")
+        : parsed.detail || message;
     } catch {
       // Keep the raw response text when the API did not return JSON.
     }
@@ -41,9 +59,15 @@ export const api = {
   areas: (filters) => request(`/market/areas${query(filters)}`),
   predictionOptions: (scopes) => request(`/prediction/options${query(scopes)}`),
   predictPrice: (payload) =>
-    request("/predict/price", { method: "POST", body: JSON.stringify(payload) }),
+    request("/predict/price", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   roi: (payload) =>
-    request("/roi/calculate", { method: "POST", body: JSON.stringify(payload) }),
+    request("/roi/calculate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   opportunities: (filters) => request(`/opportunities${query(filters)}`),
   performance: () => request("/model/performance"),
 };
