@@ -27,6 +27,7 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://localhost:4173",
         "http://127.0.0.1:4173",
+        "https://dubai-roi-analysis.vercel.app",
         "https://dubai-roi-analysis-mbqxvblk5-ray-beab.vercel.app",
         *[origin.strip().rstrip("/") for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if origin.strip()],
     ],
