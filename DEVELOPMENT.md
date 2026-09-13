@@ -76,7 +76,7 @@ The build also downloads the prepared database, if needed, and calculates exact 
 
 Keep `DASHBOARD_DB_URL` set to the direct download URL of the prepared SQLite database, with `DASHBOARD_DATA_TOKEN` only if the download requires it. Downloads stream in 1 MiB chunks and publish the file only after completion. A PostgreSQL connection string is not a download URL. Missing data now raises an explicit configuration error instead of attempting to rebuild millions of raw CSV rows in the web process.
 
-Keep `CORS_ALLOWED_ORIGINS` set to your Vercel origin(s), comma-separated. Keep Vercel's `VITE_API_BASE` pointed at the Render backend. No frontend changes are needed for this optimization.
+Vercel builds use `/api` on the frontend's own origin. `frontend/vercel.json` forwards those requests (including valuation POSTs and figure requests) to the Render backend. This avoids browser CORS failures when production and preview hostnames differ. Local development and other hosts still use `VITE_API_BASE`. If the Render backend URL changes, update the rewrite destination. Direct cross-origin clients can use `CORS_ALLOWED_ORIGINS`, a comma-separated origin list; the production Vercel origin is also explicitly allowed in the backend.
 
 Use one worker: additional worker processes each load a separate model and cache. The saved regressor is loaded lazily, once per process, and inference uses one CPU thread. Its feature preparation, category alignment, log-price inversion, reference-date validation, comparables and ROI behavior are preserved.
 
