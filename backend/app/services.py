@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import calendar
+import json
 import os
+import shutil
 import sqlite3
 import urllib.request
 from contextlib import closing
-from functools import lru_cache
+from functools import lru_cache, wraps
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -25,9 +27,23 @@ from note import (
     load_price_model,
     make_prediction_row,
     predict_prices,
-    prepare_dashboard_data,
     prepare_price_features,
 )
+
+from .analytics_sql import summarize, quantiles
+from .precomputed import signature
+
+
+# Bound simultaneous expensive work in this process, including cold model loading.
+_work_lock = RLock()
+
+
+def serialized(function):
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        with _work_lock:
+            return function(*args, **kwargs)
+    return wrapped
 
 
 PREDICTION_COLUMNS = [
@@ -54,12 +70,15 @@ def _download_file(url: str, destination: Path, token: str | None = None) -> Non
         request.add_header("Authorization", f"Bearer {token}")
 
     temporary = destination.with_suffix(destination.suffix + ".download")
-    with urllib.request.urlopen(request, timeout=120) as response:
-        with temporary.open("wb") as file:
-            file.write(response.read())
-    temporary.replace(destination)
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response, temporary.open("wb") as file:
+            shutil.copyfileobj(response, file, length=1024 * 1024)
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
+@serialized
 @lru_cache(maxsize=1)
 def database_path() -> Path:
     if DASHBOARD_DB_PATH.exists():
@@ -70,17 +89,19 @@ def database_path() -> Path:
         _download_file(db_url, DASHBOARD_DB_PATH, token=os.getenv("DASHBOARD_DATA_TOKEN"))
         return DASHBOARD_DB_PATH
 
-    prepare_dashboard_data()
-    if not DASHBOARD_DB_PATH.exists():
-        raise FileNotFoundError(
-            "Dashboard database was not found. Add data/dashboard.sqlite locally "
-            "or set DASHBOARD_DB_URL for deployment."
-        )
-    return DASHBOARD_DB_PATH
+    raise FileNotFoundError(
+        "Dashboard database was not found. Prepare data/dashboard.sqlite offline "
+        "or set DASHBOARD_DB_URL to the prepared SQLite download URL. "
+        "The web server does not build the database from raw CSV files."
+    )
 
 
 def _connect() -> sqlite3.Connection:
-    connection = sqlite3.connect(database_path())
+    connection = sqlite3.connect(database_path().resolve().as_uri() + "?mode=ro", uri=True)
+    connection.execute("PRAGMA temp_store=FILE")
+    connection.execute("PRAGMA cache_size=-4096")
+    connection.execute("PRAGMA temp.cache_size=-4096")
+    connection.execute("PRAGMA mmap_size=0")
     connection.row_factory = sqlite3.Row
     return connection
 
@@ -132,9 +153,16 @@ def _market_where(
     return " AND ".join(clauses), params
 
 
+@serialized
 @lru_cache(maxsize=1)
 def price_model():
-    return load_price_model()
+    from note import PRICE_MODEL_PATH
+    binary = PRICE_MODEL_PATH.with_suffix(".ubj")
+    if os.getenv("RENDER") and not binary.exists():
+        raise RuntimeError("Run python -m backend.prepare_deployment in the Render build command before starting the API.")
+    model = load_price_model(binary if binary.exists() else PRICE_MODEL_PATH)
+    model.set_params(n_jobs=1)
+    return model
 
 
 @lru_cache(maxsize=1)
@@ -181,6 +209,7 @@ def area_aliases() -> dict[str, list[str]]:
     return {name: sorted(set(group.advertised_area) - {name}) for name, group in aliases.groupby("official_area")}
 
 
+@serialized
 @lru_cache(maxsize=1)
 def options() -> dict[str, Any]:
     years = _read_sql(
@@ -206,118 +235,51 @@ def options() -> dict[str, Any]:
     }
 
 
-_market_lock = RLock()
-
-
-def _market_data(*args) -> pd.DataFrame:
-    # Concurrent overview/map requests must not read millions of rows twice on a cold cache.
-    with _market_lock:
-        return _market_data_cached(*args)
-
-
-@lru_cache(maxsize=4)
-def _market_data_cached(years: tuple, property_types: tuple, areas: tuple, min_price: float, max_price: float | None) -> pd.DataFrame:
-    """Share the same bounded, read-only data snapshot across market endpoints."""
+@lru_cache(maxsize=8)
+def _market_summary_cached(years: tuple, property_types: tuple, areas: tuple, min_price: float, max_price: float | None) -> tuple:
     where, params = _market_where(list(years), list(property_types), list(areas), min_price, max_price)
-    dataset = _read_sql(
-        f"SELECT instance_date, area_name_en, property_type_en, reg_type_en, actual_worth, procedure_area FROM transactions WHERE {where}", params
-    )
-    dataset["instance_date"] = pd.to_datetime(dataset["instance_date"], errors="coerce")
-    dataset["price_per_sqm"] = dataset["actual_worth"] / dataset["procedure_area"]
-    for column in ["area_name_en", "property_type_en", "reg_type_en"]:
-        dataset[column] = dataset[column].astype("category")
-    return dataset
+    prepared = _prepared_market_summaries().get((years, property_types, areas, min_price, max_price))
+    if prepared is not None:
+        return prepared
+    with closing(_connect()) as connection:
+        return summarize(connection, where, params)
 
 
-def overview(
-    years: list[int] | None = None,
-    property_types: list[str] | None = None,
-    areas: list[str] | None = None,
-    min_price: float = 0,
-    max_price: float | None = None,
-) -> dict[str, Any]:
-    dataset = _market_data(tuple(years or []), tuple(property_types or []), tuple(areas or []), min_price, max_price)
-    if dataset.empty:
-        return {"metrics": {"transactions": 0, "median_price": None, "median_area": None, "median_price_per_sqm": None}, "monthly": []}
-
-    monthly = (
-        dataset
-        .dropna(subset=["instance_date", "actual_worth"])
-        .assign(month_start=lambda df: df["instance_date"].dt.to_period("M").dt.to_timestamp())
-        .groupby("month_start", observed=True)
-        .agg(transactions=("actual_worth", "size"), median_price=("actual_worth", "median"), median_price_per_sqm=("price_per_sqm", "median"))
-        .reset_index()
-        .sort_values("month_start")
-    )
-
-    annual = dataset.assign(year=dataset.instance_date.dt.year).groupby("year").agg(
-        transactions=("actual_worth", "size"), median_price=("actual_worth", "median"), median_price_per_sqm=("price_per_sqm", "median")
-    ).reset_index()
-    mix = dataset.groupby("property_type_en", observed=True).agg(transactions=("actual_worth", "size"), median_price=("actual_worth", "median")).reset_index().sort_values("transactions", ascending=False)
-    leaders = dataset.groupby("area_name_en", observed=True).size().sort_values(ascending=False)
-    price_bands = pd.cut(dataset.actual_worth, [0, 500000, 1000000, 2000000, 5000000, float("inf")], labels=["Under AED 500k", "AED 500k–1m", "AED 1m–2m", "AED 2m–5m", "Over AED 5m"])
-    off_plan = dataset.reg_type_en.eq("off-plan properties")
-    dates = dataset.instance_date.dropna()
-    return {
-        "metrics": {
-            "transactions": int(len(dataset)),
-            "median_price": float(dataset["actual_worth"].median()),
-            "median_area": float(dataset["procedure_area"].median()),
-            "median_price_per_sqm": float(dataset["price_per_sqm"].median()),
-            "total_value": float(dataset.actual_worth.sum()),
-            "off_plan_share": float(off_plan.mean()),
-            "under_1m_share": float(dataset.actual_worth.le(1000000).mean()),
-            "price_p25": float(dataset.actual_worth.quantile(0.25)),
-            "price_p75": float(dataset.actual_worth.quantile(0.75)),
-            "top_5_share": float(leaders.head(5).sum() / len(dataset)),
-            "leading_area": str(leaders.index[0]) if len(leaders) else None,
-        },
-        "coverage": {"start": dates.min().strftime("%Y-%m-%d"), "end": dates.max().strftime("%Y-%m-%d")} if len(dates) else None,
-        "annual": _records(annual),
-        "property_mix": _records(mix),
-        "price_bands": [{"label": str(label), "transactions": int(count)} for label, count in price_bands.value_counts(sort=False).items()],
-        "monthly": [
-            {
-                "month_start": row.month_start.strftime("%Y-%m-%d"),
-                "transactions": int(row.transactions),
-                "median_price": float(row.median_price),
-                "median_price_per_sqm": float(row.median_price_per_sqm),
-            }
-            for row in monthly.itertuples()
-        ],
-    }
+@lru_cache(maxsize=1)
+def _prepared_market_summaries() -> dict:
+    path = DATA_DIR / 'market_summaries.json'
+    if not path.exists():
+        return {}
+    try:
+        with path.open(encoding='utf-8') as source:
+            prepared = json.load(source)
+        if prepared['signature'] != signature(database_path()):
+            return {}
+        return {(tuple(item['years']), (), (), 0, None): (item['overview'], item['areas'])
+                for item in prepared['summaries']}
+    except (OSError, ValueError, KeyError, TypeError):
+        # An absent, stale, or interrupted artifact never changes analytics results.
+        return {}
 
 
-def area_summary(
-    years: list[int] | None = None,
-    property_types: list[str] | None = None,
-    areas: list[str] | None = None,
-    min_transactions: int = 25,
-    min_price: float = 0,
-    max_price: float | None = None,
-) -> list[dict[str, Any]]:
-    dataset = _market_data(tuple(years or []), tuple(property_types or []), tuple(areas or []), min_price, max_price)
-    if dataset.empty:
+def _market_summary(years, property_types, areas, min_price, max_price):
+    # Cache only small response summaries; equivalent selections share a key.
+    with _work_lock:
+        return _market_summary_cached(tuple(sorted(set(years or []))),
+                                      tuple(sorted(set(property_types or []))),
+                                      tuple(sorted(set(areas or []))), min_price, max_price)
+
+
+def overview(years=None, property_types=None, areas=None, min_price=0, max_price=None) -> dict[str, Any]:
+    return _market_summary(years, property_types, areas, min_price, max_price)[0]
+
+
+def area_summary(years=None, property_types=None, areas=None, min_transactions=25,
+                 min_price=0, max_price=None) -> list[dict[str, Any]]:
+    records = _market_summary(years, property_types, areas, min_price, max_price)[1]
+    summary = pd.DataFrame([row for row in records if row['transactions'] >= min_transactions])
+    if summary.empty:
         return []
-
-    summary = (
-        dataset
-        .groupby("area_name_en", observed=True)
-        .agg(
-            transactions=("actual_worth", "size"),
-            median_price=("actual_worth", "median"),
-            mean_price=("actual_worth", "mean"),
-            median_price_per_sqm=("price_per_sqm", "median"),
-            median_area=("procedure_area", "median"),
-            price_p25=("actual_worth", lambda values: values.quantile(0.25)),
-            price_p75=("actual_worth", lambda values: values.quantile(0.75)),
-            off_plan_share=("reg_type_en", lambda values: values.eq("off-plan properties").mean()),
-        )
-        .reset_index()
-    )
-    summary["market_share"] = summary.transactions / len(dataset)
-    summary["price_vs_market"] = summary.median_price_per_sqm / dataset.price_per_sqm.median() - 1
-    summary = summary[summary["transactions"].ge(min_transactions)]
     coordinates = load_area_coordinates()
     # Match official names to existing coordinates through the supplied alias file.
     known = coordinates.set_index("area_name_en")
@@ -343,6 +305,7 @@ def _prediction_profiles() -> pd.DataFrame:
     return _read_sql(f"SELECT {columns}, SUM(procedure_area) AS total_area, COUNT(*) AS records FROM transactions WHERE {where} GROUP BY {columns}", params)
 
 
+@serialized
 def prediction_options(scopes: dict[str, str] | None = None) -> dict[str, Any]:
     scopes = scopes or {}
     result: dict[str, Any] = {}
@@ -382,6 +345,7 @@ def _infer_advertised_area(payload: dict[str, Any]) -> str:
     return str(payload["area_name_en"])
 
 
+@serialized
 def predict_price(payload: dict[str, Any]) -> dict[str, Any]:
     asking_price = payload.get("asking_price")
     clean_payload = {
@@ -398,45 +362,46 @@ def predict_price(payload: dict[str, Any]) -> dict[str, Any]:
     features = align_price_categories(features, price_model_categories())
     predicted_price = float(predict_prices(price_model(), features)[0])
 
-    similar = _read_sql(
-        """
-        SELECT actual_worth, procedure_area, instance_date
-        FROM transactions
-        WHERE actual_worth IS NOT NULL
-          AND trans_group_en = 'sales'
-          AND actual_worth > 0
-          AND area_name_en = ?
-          AND property_sub_type_en = ?
-          AND rooms_en = ?
-          AND property_type_en = ?
-          AND reg_type_en = ?
-          AND procedure_area BETWEEN ? AND ?
-          AND instance_date >= ? AND instance_date < ?
-        """,
-        [
-            clean_payload["area_name_en"],
-            clean_payload["property_sub_type_en"],
-            clean_payload["rooms_en"],
-            clean_payload["property_type_en"],
-            clean_payload["reg_type_en"],
-            clean_payload["procedure_area"] * 0.75,
-            clean_payload["procedure_area"] * 1.25,
-            (pd.Timestamp(year=clean_payload["year"], month=clean_payload["month"], day=1) - pd.DateOffset(months=35)).strftime("%Y-%m-%d"),
-            (pd.Timestamp(year=clean_payload["year"], month=clean_payload["month"], day=1) + pd.DateOffset(months=1)).strftime("%Y-%m-%d"),
-        ],
-    )
-    median_similar = None
-    if len(similar) >= 10:
-        median_similar = float(similar["actual_worth"].median())
+    with closing(_connect()) as connection:
+        connection.execute(
+            """
+            CREATE TEMP TABLE similar AS SELECT actual_worth
+            FROM transactions
+            WHERE actual_worth IS NOT NULL
+              AND trans_group_en = 'sales'
+              AND actual_worth > 0
+              AND area_name_en = ?
+              AND property_sub_type_en = ?
+              AND rooms_en = ?
+              AND property_type_en = ?
+              AND reg_type_en = ?
+              AND procedure_area BETWEEN ? AND ?
+              AND instance_date >= ? AND instance_date < ?
+            """,
+            [
+                clean_payload["area_name_en"],
+                clean_payload["property_sub_type_en"],
+                clean_payload["rooms_en"],
+                clean_payload["property_type_en"],
+                clean_payload["reg_type_en"],
+                clean_payload["procedure_area"] * 0.75,
+                clean_payload["procedure_area"] * 1.25,
+                (pd.Timestamp(year=clean_payload["year"], month=clean_payload["month"], day=1) - pd.DateOffset(months=35)).strftime("%Y-%m-%d"),
+                (pd.Timestamp(year=clean_payload["year"], month=clean_payload["month"], day=1) + pd.DateOffset(months=1)).strftime("%Y-%m-%d"),
+            ],
+        )
+        similar_count = connection.execute("SELECT COUNT(*) FROM similar").fetchone()[0]
+        band = quantiles(connection, "similar", "actual_worth").get("all") if similar_count >= 10 else None
+    median_similar = band[1] if band else None
 
     return {
         "predicted_price": predicted_price,
         "predicted_price_per_sqm": predicted_price / float(clean_payload["procedure_area"]),
         "similar_median_price": median_similar,
-        "similar_count": int(len(similar)),
+        "similar_count": similar_count,
         "advertised_area_used": clean_payload["advertised_area"],
-        "similar_p25": float(similar.actual_worth.quantile(.25)) if len(similar) >= 10 else None,
-        "similar_p75": float(similar.actual_worth.quantile(.75)) if len(similar) >= 10 else None,
+        "similar_p25": band[0] if band else None,
+        "similar_p75": band[2] if band else None,
         "model_vs_comparables": predicted_price / median_similar - 1 if median_similar else None,
         "asking_vs_model": asking_price / predicted_price - 1 if asking_price and predicted_price else None,
         "asking_price": asking_price,

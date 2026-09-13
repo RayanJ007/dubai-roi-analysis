@@ -26,14 +26,14 @@ class AnalyticsTests(unittest.TestCase):
         connection.close()
         self.database_patch = patch.object(services, "database_path", return_value=self.db)
         self.database_patch.start()
-        services._market_data_cached.cache_clear()
-        services.options.cache_clear()
+        services._market_summary_cached.cache_clear()
+        services.options.__wrapped__.cache_clear()
         self.client = TestClient(app)
 
     def tearDown(self):
         self.client.close()
-        services._market_data_cached.cache_clear()
-        services.options.cache_clear()
+        services._market_summary_cached.cache_clear()
+        services.options.__wrapped__.cache_clear()
         self.database_patch.stop()
         self.temp.cleanup()
 

@@ -37,3 +37,5 @@ frontend/dist/
 dubai_charts.cpython-313.pyc
 data/dashboard.sqlite
 data/dashboard_cache.parquet
+models/*.ubj
+data/market_summaries.json
